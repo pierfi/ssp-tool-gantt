@@ -51,6 +51,8 @@ interface State extends PlannerData {
   syncDetail: string;
   /** epic ids highlighted on the board (per viewer) */
   highlight: string[];
+  /** open right-click menu on a task bar */
+  menu: { taskId: string; x: number; y: number } | null;
 }
 
 // --- view-model shapes consumed by render() ---------------------------
@@ -94,6 +96,7 @@ interface BarVM {
   onResizeR: (e: React.PointerEvent) => void;
   onLink: (e: React.PointerEvent) => void;
   onClick: (e: React.MouseEvent) => void;
+  onMenu?: (e: React.MouseEvent) => void;
   /** faded because another epic is highlighted */
   dim: boolean;
   linkFg?: string;
@@ -140,6 +143,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
       sync: hosted ? 'connecting' : 'local',
       syncDetail: '',
       highlight: loadHighlight(),
+      menu: null,
       selected: null,
       draft: null,
       importOpen: false,
@@ -264,11 +268,17 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
   componentDidMount() {
     if (hostedOnClaude()) this.connectDb();
     else setTimeout(() => this.scrollToday(), 60);
+    window.addEventListener('keydown', this.onKey);
   }
 
   componentWillUnmount() {
     this.db?.close();
+    window.removeEventListener('keydown', this.onKey);
   }
+
+  onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && this.state.menu) this.setState({ menu: null });
+  };
 
   componentDidUpdate(_p: unknown, prev: State) {
     const s = this.state;
@@ -489,6 +499,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
   }
 
   startDrag(e: React.PointerEvent, task: Task, mode: 'move' | 'l' | 'r') {
+    if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
     if (this.state.linkFrom) {
@@ -552,6 +563,69 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
         ? st.highlight.filter((x) => x !== epicId)
         : [...st.highlight, epicId],
     }));
+  }
+
+  // --- task context menu -------------------------------------------
+
+  buildMenu() {
+    const s = this.state;
+    const t = s.menu && s.tasks.find((x) => x.id === s.menu!.taskId);
+    if (!s.menu || !t) return null;
+    const close = () => this.setState({ menu: null });
+    const epic = s.epics.find((e) => e.id === t.epicId);
+    const people = [
+      ...s.members.map((m) => ({
+        id: m.id as string | null,
+        name: m.name,
+        dot: 'oklch(0.68 0.12 ' + m.hue + ')',
+      })),
+      { id: null, name: 'Non assegnata', dot: '#dcd8d1' },
+    ];
+    // Rough height so the menu opens upwards near the bottom edge.
+    const estH = 64 + people.length * 29 + (epic ? 58 : 29);
+    return {
+      left: Math.max(8, Math.min(s.menu.x, window.innerWidth - 228)),
+      top:
+        s.menu.y + estH > window.innerHeight
+          ? Math.max(8, s.menu.y - estH)
+          : s.menu.y,
+      heading: (t.key ? t.key + ' ' : '') + t.title,
+      close,
+      people: people.map((p) => ({
+        ...p,
+        current: (t.assignee || null) === p.id,
+        onPick: () => {
+          close();
+          if ((t.assignee || null) !== p.id) this.assign(t.id, p.id);
+        },
+      })),
+      onOpen: () => {
+        close();
+        this.select(t.id);
+      },
+      epicAction: epic
+        ? {
+            label: s.highlight.includes(epic.id)
+              ? 'Togli evidenza a ' + (epic.key || epic.title)
+              : 'Evidenzia ' + (epic.key || epic.title),
+            run: () => {
+              close();
+              this.toggleHighlight(epic.id);
+            },
+          }
+        : null,
+    };
+  }
+
+  assign(taskId: string, memberId: string | null) {
+    this.update((n) => {
+      n.tasks = n.tasks.map((t) =>
+        t.id === taskId ? { ...t, assignee: memberId } : t,
+      );
+      // keep an open detail panel in step with the new assignee
+      if (n.draft && n.draft.id === taskId)
+        n.draft = { ...n.draft, assignee: memberId || '' };
+    });
   }
 
   // --- selection / draft --------------------------------------------
@@ -698,6 +772,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
         linkFg: linking ? '#fff' : c.bd,
         linkBg: linking ? '#b6803f' : 'rgba(255,255,255,0.55)',
         onLink: (e) => {
+          if (e.button !== 0) return;
           e.preventDefault();
           e.stopPropagation();
           this.setState((st) => ({
@@ -707,6 +782,14 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
         onClick: (e) => {
           if (e && e.stopPropagation) e.stopPropagation();
           if (!this.linkTo(t.id)) this.select(t.id);
+        },
+        onMenu: (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.setState({
+            menu: { taskId: t.id, x: e.clientX, y: e.clientY },
+            linkFrom: null,
+          });
         },
         dim: dimEpic(t.epicId),
       };
@@ -975,6 +1058,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
             },
           ];
         }),
+      menu: this.buildMenu(),
       highlightCount: hl.length,
       clearHighlight: () => this.setState({ highlight: [] }),
       epicCards: s.epics.map((e) => {
@@ -1537,6 +1621,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
                             key={b.id}
                             onPointerDown={b.onDown}
                             onClick={b.onClick}
+                            onContextMenu={b.onMenu}
                             title={b.title}
                             style={css(
                               `box-sizing:border-box;position:absolute;top:${b.top}px;left:${b.left}px;width:${b.width}px;height:${b.height}px;background:${b.bg};border:1px solid ${b.border};border-radius:${b.radius}px;box-shadow:${b.shadow};display:flex;align-items:center;gap:6px;padding:0 8px;cursor:${b.cursor};overflow:hidden;user-select:none;touch-action:none;opacity:${b.dim ? 0.25 : 1};transition:opacity 0.15s`,
@@ -1970,6 +2055,79 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ---- task right-click menu ---- */}
+        {v.menu && (
+          <>
+            <div
+              onPointerDown={v.menu.close}
+              onContextMenu={(ev) => {
+                ev.preventDefault();
+                v.menu!.close();
+              }}
+              style={css('position:fixed;inset:0;z-index:60')}
+            />
+            <div
+              role="menu"
+              onContextMenu={(ev) => ev.preventDefault()}
+              style={css(
+                `position:fixed;left:${v.menu.left}px;top:${v.menu.top}px;z-index:61;width:220px;box-sizing:border-box;padding:4px;background:#fff;border:1px solid #e6e3dd;border-radius:8px;box-shadow:0 8px 24px rgba(28,27,25,0.14);font-size:12.5px;color:#1c1b19`,
+              )}
+            >
+              <div
+                style={css(
+                  'padding:6px 8px 4px;font-size:11px;color:#8a8781;white-space:nowrap;overflow:hidden;text-overflow:ellipsis',
+                )}
+              >
+                {v.menu.heading}
+              </div>
+              <div
+                style={css(
+                  'padding:6px 8px 2px;font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#a8a49c',
+                )}
+              >
+                Assegna a
+              </div>
+              {v.menu.people.map((p) => (
+                <button
+                  key={p.id || '__none'}
+                  role="menuitemradio"
+                  aria-checked={p.current}
+                  className="tp-menu-item"
+                  onClick={p.onPick}
+                  style={css(p.current ? 'font-weight:600' : '')}
+                >
+                  <span
+                    style={css(
+                      `width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:${p.dot}`,
+                    )}
+                  />
+                  <span style={css('flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis')}>
+                    {p.name}
+                  </span>
+                  {p.current && <span style={css('color:#8a8781')}>✓</span>}
+                </button>
+              ))}
+              <div style={css('height:1px;background:#eeebe6;margin:4px 2px')} />
+              {v.menu.epicAction && (
+                <button
+                  role="menuitem"
+                  className="tp-menu-item"
+                  onClick={v.menu.epicAction.run}
+                >
+                  {v.menu.epicAction.label}
+                </button>
+              )}
+              <button
+                role="menuitem"
+                className="tp-menu-item"
+                onClick={v.menu.onOpen}
+              >
+                Apri dettagli
+              </button>
+            </div>
+          </>
         )}
       </div>
     );
