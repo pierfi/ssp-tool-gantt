@@ -21,8 +21,10 @@ import {
   DbSync,
   hostedOnClaude,
   loadDayW,
+  loadHighlight,
   loadLocal,
   saveDayW,
+  saveHighlight,
   saveLocal,
   type SyncStatus,
 } from './store';
@@ -47,6 +49,8 @@ interface State extends PlannerData {
   showDependencies: boolean;
   sync: SyncStatus;
   syncDetail: string;
+  /** epic ids highlighted on the board (per viewer) */
+  highlight: string[];
 }
 
 // --- view-model shapes consumed by render() ---------------------------
@@ -90,6 +94,8 @@ interface BarVM {
   onResizeR: (e: React.PointerEvent) => void;
   onLink: (e: React.PointerEvent) => void;
   onClick: (e: React.MouseEvent) => void;
+  /** faded because another epic is highlighted */
+  dim: boolean;
   linkFg?: string;
   linkBg?: string;
 }
@@ -111,6 +117,7 @@ interface RowVM {
 interface ArrowVM {
   d: string;
   head: string;
+  dim: boolean;
 }
 
 export class TeamPlanner extends React.Component<Record<string, never>, State> {
@@ -132,6 +139,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
       ...base,
       sync: hosted ? 'connecting' : 'local',
       syncDetail: '',
+      highlight: loadHighlight(),
       selected: null,
       draft: null,
       importOpen: false,
@@ -265,6 +273,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
   componentDidUpdate(_p: unknown, prev: State) {
     const s = this.state;
     if (s.dayW !== prev.dayW) saveDayW(s.dayW);
+    if (s.highlight !== prev.highlight) saveHighlight(s.highlight);
     if (this.db) this.db.push(s);
     else if (s.sync === 'local') saveLocal(s);
   }
@@ -535,6 +544,16 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
     window.addEventListener('pointerup', up);
   }
 
+  // --- epic highlight ----------------------------------------------
+
+  toggleHighlight(epicId: string) {
+    this.setState((st) => ({
+      highlight: st.highlight.includes(epicId)
+        ? st.highlight.filter((x) => x !== epicId)
+        : [...st.highlight, epicId],
+    }));
+  }
+
   // --- selection / draft --------------------------------------------
 
   select(id: string | null) {
@@ -629,6 +648,11 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
       }
     }
 
+    // Highlighted epics that still exist; with none, nothing is dimmed.
+    const hl = s.highlight.filter((id) => s.epics.some((e) => e.id === id));
+    const dimEpic = (epicId: string | null) =>
+      hl.length > 0 && !(epicId && hl.includes(epicId));
+
     const epicCol = (h: number) => ({
       bar: 'oklch(0.93 0.045 ' + h + ')',
       bd: 'oklch(0.72 0.10 ' + h + ')',
@@ -684,6 +708,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
           if (e && e.stopPropagation) e.stopPropagation();
           if (!this.linkTo(t.id)) this.select(t.id);
         },
+        dim: dimEpic(t.epicId),
       };
     };
 
@@ -728,6 +753,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
             onResizeL: () => {},
             onResizeR: () => {},
             onLink: () => {},
+            dim: dimEpic(e.id),
           });
         }
         rows.push({
@@ -835,7 +861,11 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
           const head =
             x2 + ',' + y2 + ' ' + (x2 - 6) + ',' + (y2 - 4.5) + ' ' +
             (x2 - 6) + ',' + (y2 + 4.5);
-          arrows.push({ d, head });
+          arrows.push({
+            d,
+            head,
+            dim: dimEpic(p.epicId) && dimEpic(t.epicId),
+          });
         });
       });
 
@@ -945,10 +975,17 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
             },
           ];
         }),
+      highlightCount: hl.length,
+      clearHighlight: () => this.setState({ highlight: [] }),
       epicCards: s.epics.map((e) => {
         const ts = s.tasks.filter((t) => t.epicId === e.id);
+        const on = hl.includes(e.id);
         return {
           id: e.id,
+          highlighted: on,
+          cardBd: on ? epicCol(e.hue).dot : '#eeebe6',
+          cardBg: on ? 'oklch(0.97 0.02 ' + e.hue + ')' : '#fdfdfc',
+          onToggle: () => this.toggleHighlight(e.id),
           key: e.key || '—',
           title: e.title,
           dot: epicCol(e.hue).dot,
@@ -1244,17 +1281,33 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
 
             <div
               style={css(
-                'font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#8a8781;margin-bottom:10px',
+                'display:flex;align-items:baseline;font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#8a8781;margin-bottom:10px',
               )}
             >
-              Epiche
+              <span>Epiche</span>
+              {v.highlightCount > 0 && (
+                <button
+                  onClick={v.clearHighlight}
+                  style={css(
+                    'margin-left:auto;border:none;background:transparent;padding:0;cursor:pointer;color:#3d5a80;font-size:10.5px;font-weight:500;letter-spacing:0;text-transform:none',
+                  )}
+                >
+                  Mostra tutte ({v.highlightCount} evidenziate)
+                </button>
+              )}
             </div>
             <div style={css('display:flex;flex-direction:column;gap:8px')}>
               {v.epicCards.map((e) => (
                 <div
                   key={e.id}
+                  onClick={e.onToggle}
+                  title={
+                    e.highlighted
+                      ? 'Clic per togliere l’evidenza'
+                      : 'Clic per evidenziare sul Gantt'
+                  }
                   style={css(
-                    'border:1px solid #eeebe6;border-radius:8px;padding:10px;background:#fdfdfc',
+                    `border:1px solid ${e.cardBd};border-radius:8px;padding:10px;background:${e.cardBg};cursor:pointer`,
                   )}
                 >
                   <div
@@ -1287,7 +1340,10 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
                       </div>
                     </div>
                     <button
-                      onClick={e.onRemove}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        e.onRemove();
+                      }}
                       title="Elimina epica"
                       style={css(
                         'width:20px;height:20px;border:none;background:transparent;color:#b3afa7;cursor:pointer;font-size:14px;line-height:1',
@@ -1296,7 +1352,10 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
                       ×
                     </button>
                   </div>
-                  <div style={css('display:flex;gap:6px;margin-top:8px')}>
+                  <div
+                    onClick={(ev) => ev.stopPropagation()}
+                    style={css('display:flex;gap:6px;margin-top:8px')}
+                  >
                     <button
                       onClick={e.onEdit}
                       style={css(
@@ -1480,7 +1539,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
                             onClick={b.onClick}
                             title={b.title}
                             style={css(
-                              `box-sizing:border-box;position:absolute;top:${b.top}px;left:${b.left}px;width:${b.width}px;height:${b.height}px;background:${b.bg};border:1px solid ${b.border};border-radius:${b.radius}px;box-shadow:${b.shadow};display:flex;align-items:center;gap:6px;padding:0 8px;cursor:${b.cursor};overflow:hidden;user-select:none;touch-action:none`,
+                              `box-sizing:border-box;position:absolute;top:${b.top}px;left:${b.left}px;width:${b.width}px;height:${b.height}px;background:${b.bg};border:1px solid ${b.border};border-radius:${b.radius}px;box-shadow:${b.shadow};display:flex;align-items:center;gap:6px;padding:0 8px;cursor:${b.cursor};overflow:hidden;user-select:none;touch-action:none;opacity:${b.dim ? 0.25 : 1};transition:opacity 0.15s`,
                             )}
                           >
                             {b.isBug && (
@@ -1550,10 +1609,16 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
                       fill="none"
                       stroke="#b6803f"
                       strokeWidth={1.5}
+                      opacity={a.dim ? 0.2 : 1}
                     />
                   ))}
                   {v.arrows.map((a, i) => (
-                    <polygon key={'h' + i} points={a.head} fill="#b6803f" />
+                    <polygon
+                      key={'h' + i}
+                      points={a.head}
+                      fill="#b6803f"
+                      opacity={a.dim ? 0.2 : 1}
+                    />
                   ))}
                 </svg>
 
