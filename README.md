@@ -18,6 +18,15 @@ npm run build    # type-check + build di produzione in dist/
 npm run preview  # serve la build di produzione
 ```
 
+```bash
+npm run build:artifact   # build + dist/artifact.html, pagina unica da pubblicare
+```
+
+`dist/artifact.html` è pubblicato come Artifact con la capability `db`:
+<https://claude.ai/artifact/WvdZCicv6BJNEPM4nT2kXV> (privato, condivisibile
+dal menu Share). Per aggiornarlo: rifai la build e ripubblica lo stesso file
+dalla sessione Claude Code; i dati nel DB restano.
+
 ## Cosa fa
 
 - **Le righe sono gli assegnatari.** Ogni membro del team ha una corsia; le
@@ -40,7 +49,11 @@ npm run preview  # serve la build di produzione
 - **Toggle _righe epiche_ / _dipendenze_** nell'header: nascondono/mostrano le
   righe riassuntive delle epiche e le frecce dei vincoli (nel design originale
   erano due _tweak_ dell'editor Claude Design).
-- Lo stato è salvato in `localStorage` con chiave `team-planner-v1`.
+- **Persistenza**: pubblicato come Artifact su claude.ai, i dati stanno in un
+  database condiviso (un documento per membro, epica e attività, sincronizzato
+  live tra chi apre la pagina). In locale (`npm run dev`) restano in
+  `localStorage` con chiave `team-planner-v1`. L'indicatore nell'header mostra
+  dove si sta salvando. Lo zoom resta una preferenza del singolo browser.
 
 ## Come importare e modificare le epiche
 
@@ -64,10 +77,12 @@ due date: 2026-10-16
 | `src/types.ts` | Modello di dominio (`Member`, `Epic`, `Task`, `PlannerData`, output del parser) |
 | `src/logic.ts` | Helper puri: calcoli su date, settimana ISO, palette di tinte, scheduling delle dipendenze, parser/serializzatore del formato testo, e l'helper `css()` per gli stili inline |
 | `src/TeamPlanner.tsx` | Il componente: stato, gestori di drag/resize/link, import + modifica epica, costruzione del view-model, render |
+| `src/store.ts` | Persistenza: `localStorage` in locale, sincronizzazione col DB dell'Artifact (diff per documento, scritture raggruppate) |
+| `scripts/build-artifact.mjs` | Inline di JS/CSS della build in `dist/artifact.html` |
 | `src/main.tsx` | Entry point React |
 | `src/styles.css` | Stili globali (dal blocco `<helmet>` del design) |
 
 ## Stack
 
-Vite · React 18 · TypeScript. Nessun backend: tutto gira nel browser e persiste
-in `localStorage`.
+Vite · React 18 · TypeScript. Nessun backend proprio: il DB è quello
+dell'Artifact claude.ai; in locale si usa `localStorage`.

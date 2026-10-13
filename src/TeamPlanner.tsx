@@ -17,8 +17,15 @@ import {
   serializeEpic,
   uid,
 } from './logic';
-
-const STORAGE_KEY = 'team-planner-v1';
+import {
+  DbSync,
+  hostedOnClaude,
+  loadDayW,
+  loadLocal,
+  saveDayW,
+  saveLocal,
+  type SyncStatus,
+} from './store';
 
 const DEFAULT_IMPORT =
   'epic: SSP-1234 python end of life eol\n' +
@@ -38,6 +45,8 @@ interface State extends PlannerData {
   epicEditText: string;
   showEpicRows: boolean;
   showDependencies: boolean;
+  sync: SyncStatus;
+  syncDetail: string;
 }
 
 // --- view-model shapes consumed by render() ---------------------------
@@ -106,19 +115,23 @@ interface ArrowVM {
 
 export class TeamPlanner extends React.Component<Record<string, never>, State> {
   scrollRef: React.RefObject<HTMLDivElement>;
+  db: DbSync | null = null;
+  scrolled = false;
 
   constructor(props: Record<string, never>) {
     super(props);
-    let stored: unknown = null;
-    try {
-      stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-    } catch {
-      /* ignore corrupt storage */
-    }
-    const s = stored as Partial<PlannerData> | null;
-    const base = this.migrate(s && s.tasks ? s : this.seed());
+    // Published on claude.ai the board starts empty and fills from the
+    // shared DB; locally it keeps using localStorage (and the demo seed).
+    const hosted = hostedOnClaude();
+    const s = hosted ? null : loadLocal();
+    const base = hosted
+      ? { dayW: 24, members: [], epics: [], tasks: [] }
+      : this.migrate(s && s.tasks ? s : this.seed());
+    base.dayW = loadDayW() ?? base.dayW;
     this.state = {
       ...base,
+      sync: hosted ? 'connecting' : 'local',
+      syncDetail: '',
       selected: null,
       draft: null,
       importOpen: false,
@@ -241,19 +254,47 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
   // --- lifecycle -----------------------------------------------------------
 
   componentDidMount() {
-    setTimeout(() => this.scrollToday(), 60);
+    if (hostedOnClaude()) this.connectDb();
+    else setTimeout(() => this.scrollToday(), 60);
   }
 
-  componentDidUpdate() {
-    const { dayW, members, epics, tasks } = this.state;
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ dayW, members, epics, tasks }),
-      );
-    } catch {
-      /* storage may be unavailable */
+  componentWillUnmount() {
+    this.db?.close();
+  }
+
+  componentDidUpdate(_p: unknown, prev: State) {
+    const s = this.state;
+    if (s.dayW !== prev.dayW) saveDayW(s.dayW);
+    if (this.db) this.db.push(s);
+    else if (s.sync === 'local') saveLocal(s);
+  }
+
+  async connectDb() {
+    const sync = await DbSync.connect(
+      (remote) => {
+        this.setState({
+          members: remote.members,
+          epics: remote.epics,
+          tasks: remote.tasks.map((t) => ({ ...t, deps: t.deps || [] })),
+        });
+        if (!this.scrolled) {
+          this.scrolled = true;
+          setTimeout(() => this.scrollToday(), 60);
+        }
+      },
+      (sync, detail) => this.setState({ sync, syncDetail: detail || '' }),
+    );
+    if (sync) {
+      this.db = sync;
+      return;
     }
+    // This view cannot use the DB: fall back to this browser only.
+    const s = loadLocal();
+    this.setState({
+      ...this.migrate(s && s.tasks ? s : {}),
+      sync: 'local',
+    });
+    setTimeout(() => this.scrollToday(), 60);
   }
 
   // --- state plumbing ----------------------------------------------------
@@ -1051,7 +1092,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
     return (
       <div
         style={css(
-          'display:flex;flex-direction:column;height:100vh;background:#faf9f7;color:#1c1b19;font-size:13px',
+          'display:flex;flex-direction:column;height:100%;background:#faf9f7;color:#1c1b19;font-size:13px',
         )}
       >
         {/* ---- header ---- */}
@@ -1070,6 +1111,7 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
           >
             pianificazione &amp; priorità
           </div>
+          <SyncBadge status={this.state.sync} detail={this.state.syncDetail} />
           <div style={css('flex:1')} />
           <div style={css('display:flex;align-items:center;gap:10px')}>
             <label
@@ -1304,6 +1346,25 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
               'flex:1;min-width:0;overflow:auto;position:relative;background:#faf9f7',
             )}
           >
+            {this.state.tasks.length === 0 && this.state.sync !== 'connecting' && (
+              <div style={css('position:sticky;left:0;top:0;height:0;z-index:5')}>
+                <div
+                  style={css(
+                    'position:absolute;top:140px;left:0;right:0;display:flex;justify-content:center;pointer-events:none',
+                  )}
+                >
+                  <div
+                    style={css(
+                      'max-width:340px;padding:14px 18px;border:1px dashed #ddd9d2;border-radius:8px;background:#fff;color:#54524d;font-size:12.5px;line-height:1.5;text-align:center',
+                    )}
+                  >
+                    Nessuna attività pianificata. Usa <b>Incolla epica</b> per
+                    importare epiche e attività, oppure <b>+ Attività senza
+                    epica</b> per crearne una.
+                  </div>
+                </div>
+              </div>
+            )}
             <div style={css(`min-width:${v.canvasW}px`)}>
               {/* sticky column header */}
               <div
@@ -1848,4 +1909,34 @@ export class TeamPlanner extends React.Component<Record<string, never>, State> {
       </div>
     );
   }
+}
+
+// --- persistence status pill ------------------------------------------
+
+const SYNC_LABEL: Record<SyncStatus, [string, string]> = {
+  local: ['solo questo browser', '#a8a49c'],
+  connecting: ['connessione al db…', '#a8a49c'],
+  synced: ['db condiviso · salvato', '#3f8f5a'],
+  saving: ['salvataggio…', '#c08a2b'],
+  readonly: ['sola lettura', '#8a8781'],
+  error: ['errore db', '#c0392b'],
+};
+
+function SyncBadge({ status, detail }: { status: SyncStatus; detail: string }) {
+  const [label, color] = SYNC_LABEL[status];
+  return (
+    <div
+      title={detail || label}
+      style={css(
+        "display:flex;align-items:center;gap:6px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:#8a8781",
+      )}
+    >
+      <span
+        style={css(
+          `width:7px;height:7px;border-radius:50%;background:${color};display:inline-block`,
+        )}
+      />
+      {label}
+    </div>
+  );
 }
