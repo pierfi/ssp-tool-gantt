@@ -89,6 +89,26 @@ export function saveDayW(n: number) {
   }
 }
 
+const HIGHLIGHT_KEY = 'team-planner-highlight';
+
+/** Highlighted epics are a per-viewer view setting, like zoom. */
+export function loadHighlight(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(HIGHLIGHT_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveHighlight(ids: string[]) {
+  try {
+    localStorage.setItem(HIGHLIGHT_KEY, JSON.stringify(ids));
+  } catch {
+    /* ignore */
+  }
+}
+
 // --- shared DB ----------------------------------------------------------
 
 /** True when running inside the claude.ai viewer (published Artifact). */
