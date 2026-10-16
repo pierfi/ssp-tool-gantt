@@ -6,6 +6,8 @@ di un team. Implementato a partire dal componente Claude Design
 
 L'interfaccia è in italiano, come il design di partenza.
 
+![Team Planner: Gantt per assegnatario con epiche, attività e dipendenze](docs/img/team-planner.png)
+
 ## Avvio
 
 ```bash
@@ -69,6 +71,51 @@ epic: SSP-1234 python end of life eol
 start: 2026-09-07
 due date: 2026-10-16
 ```
+
+## Statuto: lavorare con gli LLM
+
+Il progetto si sviluppa con più strumenti Claude, ognuno con il suo ruolo.
+Le regole operative complete sono in [CLAUDE.md](CLAUDE.md), letto da ogni
+istanza di Claude; quelle valide su una sola macchina stanno in
+`CLAUDE.local.md`, non versionato (se dicono cose diverse vale `CLAUDE.md`).
+
+| Chi | Ruolo | Legge | Scrive |
+| --- | --- | --- | --- |
+| **claude.ai** | ideazione: idee, gusti, decisioni aperte | il repo, la roadmap | proposte e decisioni, da riportare in [docs/roadmap.md](docs/roadmap.md) |
+| **Claude Design** | design: interfaccia, aspetto, componenti. È la fonte del design | il progetto Claude Design (`Team Planner.dc.html`) | il design, non il codice |
+| **Claude Code** | sviluppo: codice, build, documenti | tutto il repo, il design | branch `feature/<nome>` |
+| **GitHub** | contratto e controllo: branch, PR, merge | - | - |
+| **Piero** | decide, rivede, mergia | tutto | le decisioni, l'ok ai commit, il merge |
+
+**Principi**
+
+- **Il design è curato da Claude Design.** Il codice lo segue: una differenza
+  tra app e design si porta in Claude Design o si registra come decisione
+  nella roadmap, mai risolta in silenzio nel codice. Le modifiche grafiche
+  si propongono con un'anteprima visiva (screenshot o varianti a confronto),
+  non solo a parole.
+- **Mai commit diretti su `main`.** Si lavora su `feature/<nome>` e si entra
+  con una PR su GitHub, che Piero rivede e mergia (merge commit, non squash).
+  Un branch lungo si aggiorna con `git merge main`, mai con rebase o force
+  push.
+- **Prima di ogni commit** Claude mostra le modifiche e aspetta l'ok. Commit
+  piccoli e coerenti, `npm run build` verde a ogni commit, aggiunti per nome
+  (mai `git add .`).
+- **Ogni lavoro ha un codice** (`GNT-NN` app, `WF-NN` flusso di lavoro),
+  registrato in [docs/roadmap.md](docs/roadmap.md) con il suo stato. Formato
+  del commit: `<codice>: <descrizione> | <label>`.
+- **Le decisioni stanno nella roadmap** (D1, D2, ...), con data e motivo.
+  Quando Claude cita una decisione con il suo codice, la riassume in una riga
+  in una legenda a fine messaggio.
+- **Niente dati riservati nei prompt.** Il Jira aziendale è protetto: entra
+  solo come testo incollato da Piero, senza credenziali né connettori.
+- **Il chatbot riferisce il vero:** se un test o una build falliscono, o un
+  passo è saltato, lo dice.
+- Niente righe di attribuzione né trattino lungo (U+2014) in commit e PR.
+
+## Roadmap
+
+Piano di lavoro, task e decisioni aperte: [docs/roadmap.md](docs/roadmap.md).
 
 ## Struttura del progetto
 
